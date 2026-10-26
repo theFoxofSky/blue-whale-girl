@@ -1,0 +1,5 @@
+Menu bar icon: the whale path from DeepSeek's official SVG logo.
+Source: https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/images/logo.svg
+Retrieved: 2026-10-26
+Original file: deepseek-logo-original.svg
+The original whale path and #4D6BFE fill are preserved; only the wordmark is omitted and the viewBox is fitted for the menu bar.
