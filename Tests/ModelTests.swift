@@ -126,5 +126,87 @@ func runModelTests() -> [String] {
     check(waiting.motion == .sleeping,"Automatic bowl animation still allows inactivity sleep")
     waiting.tick(now:1000,pointerNear:true,canChase:true,randomRoll:{0.01})
     check(waiting.motion == .sleeping,"Pointer proximity and expired animation timers cannot wake the pet")
+
+    for (motion,count) in [(PetMotion.headpat,6),(.waving,4)] {
+        var once=PetModel(now:0)
+        once.automaticWalking=false
+        once.perform(motion,now:1)
+        let indices=(0..<count).map { once.frameIndex(now:1+Double($0)*motion.frameSeconds+0.001,count:count) }
+        check(indices==Array(0..<count),"\(motion) plays every frame exactly once")
+        check(once.frameIndex(now:1+motion.duration!+0.1,count:count)==count-1,
+              "\(motion) cannot wrap to its first frame before the next tick")
+        once.tick(now:1+motion.duration!-0.001,pointerNear:true,randomRoll:{0.99})
+        check(once.motion==motion,"\(motion) keeps its final frame until completion")
+        once.tick(now:1+motion.duration!+0.001,pointerNear:true,randomRoll:{0.99})
+        check(once.motion == .idle,"\(motion) returns to idle after one cycle")
+        check(!motion.reactsToPointerMovement,"Pointer movement cannot restart \(motion) mid-cycle")
+    }
+
+    func orbit(_ pet: inout PetModel, start: Double, turns: Double,
+               direction: Double = 1, fromTurns: Double = 0, eligible: Bool = true) -> Bool {
+        for sample in 0...Int((turns*64).rounded()) {
+            let angle=(fromTurns+direction*Double(sample)/64)*2*Double.pi
+            if pet.observeGaze(dx:100*cos(angle),dyUp:100*sin(angle),now:start+Double(sample)/64,eligible:eligible) {
+                return true
+            }
+        }
+        return false
+    }
+    for direction in [1.0,-1.0] {
+        var dizzy=PetModel(now:0)
+        check(!orbit(&dizzy,start:0,turns:5,direction:direction),
+              "Exactly five turns do not trigger dizziness (direction \(direction))")
+        check(orbit(&dizzy,start:5,turns:0.125,direction:direction,fromTurns:5*direction),
+              "More than five continuous turns trigger dizziness (direction \(direction))")
+        check(dizzy.motion == .dizzy && !dizzy.isChasing,"Orbit enters the seated dizzy state")
+        let began=dizzy.started
+        dizzy.tick(now:began+4.99,pointerNear:true,canChase:true,randomRoll:{0.01})
+        check(dizzy.motion == .dizzy,"Dizziness is protected from automatic behaviors")
+        dizzy.tick(now:began+5.01,pointerNear:true,randomRoll:{0.99})
+        check(dizzy.motion == .idle,"Dizziness recovers after five seconds")
+    }
+    var wobble=PetModel(now:0)
+    for sample in 0..<2000 {
+        let angle=sample%2 == 0 ? 0.0 : Double.pi/3
+        wobble.observeGaze(dx:100*cos(angle),dyUp:100*sin(angle),now:Double(sample)/64,eligible:true)
+    }
+    check(wobble.motion == .idle,"Repeated back-and-forth mouse movements do not add up to circles")
+    var reversed=PetModel(now:0)
+    check(!orbit(&reversed,start:0,turns:2.75),"Partial orbit is below the threshold")
+    check(!orbit(&reversed,start:2.75,turns:2.75,direction:-1,fromTurns:2.75),
+          "Reversing direction cancels angular progress instead of counting both paths")
+    var interrupted=PetModel(now:0)
+    _=orbit(&interrupted,start:0,turns:3)
+    interrupted.observeGaze(dx:100,dyUp:0,now:3.1,eligible:false)
+    check(!orbit(&interrupted,start:3.2,turns:3),"Leaving the gaze area or blocking input clears partial turns")
+    var paused=PetModel(now:0)
+    _=orbit(&paused,start:0,turns:3)
+    paused.observeGaze(dx:100,dyUp:0,now:5,eligible:true)
+    check(!orbit(&paused,start:5,turns:3),"A pause between circles starts a new gesture")
+    var jumped=PetModel(now:0)
+    for sample in 0..<100 {
+        let angle=Double(sample)*Double.pi*0.75
+        jumped.observeGaze(dx:100*cos(angle),dyUp:100*sin(angle),now:Double(sample)/30,eligible:true)
+    }
+    check(jumped.motion == .idle,"Large cursor jumps cannot fabricate completed circles")
+    var tooClose=PetModel(now:0)
+    for sample in 0..<400 {
+        let angle=Double(sample)/64*2*Double.pi
+        tooClose.observeGaze(dx:20*cos(angle),dyUp:20*sin(angle),now:Double(sample)/64,eligible:true)
+    }
+    check(tooClose.motion == .idle,"Small movements over the face do not count as orbiting the head")
+    for motion in [PetMotion.sleeping,.waiting,.eating,.headpat,.waving,.affection,.peekLeft,.peekRight] {
+        var protected=PetModel(now:0)
+        protected.perform(motion,now:0)
+        check(!orbit(&protected,start:0,turns:6) && protected.motion==motion,
+              "Mouse circles cannot interrupt \(motion)")
+    }
+    var cooldown=PetModel(now:0)
+    cooldown.perform(.dizzy,now:0)
+    cooldown.tick(now:5.1,pointerNear:true,randomRoll:{0.99})
+    check(!orbit(&cooldown,start:5.2,turns:6),"Dizzy recovery has a cooldown before another gesture")
+    check(orbit(&cooldown,start:16,turns:5.125),"A fresh gesture works after the cooldown")
+    cooldown.perform(.eating,now:22)
+    check(cooldown.motion == .eating,"An explicit click action can interrupt dizziness")
     return passed
 }

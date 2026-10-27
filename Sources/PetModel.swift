@@ -3,21 +3,22 @@ import CoreGraphics
 
 enum PetMotion: String, CaseIterable {
     case idle, walkRight = "running-right", walkLeft = "running-left"
-    case waving, jumping, waiting, eating, sleeping, headpat, affection
+    case waving, jumping, waiting, eating, sleeping, headpat, affection, dizzy
     case peekLeft = "peek-left", peekRight = "peek-right"
     var isWalking: Bool { self == .walkRight || self == .walkLeft }
     var isPeeking: Bool { self == .peekLeft || self == .peekRight }
     var reactsToPointerMovement: Bool {
-        self == .idle || isWalking || self == .waving || self == .headpat
+        self == .idle || isWalking
     }
     var duration: Double? {
         switch self {
         case .eating: return 3.6
-        case .headpat: return 2.0
-        case .waving: return 1.8
+        case .headpat: return 6 * frameSeconds
+        case .waving: return 4 * frameSeconds
         case .jumping: return 0.9
         case .affection: return 2.2
         case .waiting: return 2.4
+        case .dizzy: return 5.0
         case .walkRight, .walkLeft: return 8.0
         default: return nil
         }
@@ -31,8 +32,44 @@ enum PetMotion: String, CaseIterable {
         case .jumping: return 0.18
         case .waving: return 0.15
         case .waiting: return 0.4
-        case .idle, .affection, .peekLeft, .peekRight: return 0.24
+        case .idle, .affection, .dizzy, .peekLeft, .peekRight: return 0.24
         }
+    }
+}
+
+struct GazeOrbitTracker {
+    private var lastAngle: Double?
+    private var lastSample: Double = 0
+    private var lastMovement: Double = 0
+    private(set) var radians: Double = 0
+
+    mutating func reset() { self = Self() }
+
+    mutating func sample(dx: Double, dyUp: Double, now: Double) -> Bool {
+        guard dx.isFinite, dyUp.isFinite, now.isFinite, hypot(dx,dyUp)>52 else {
+            reset()
+            return false
+        }
+        let angle=atan2(dyUp,dx)
+        guard let previous=lastAngle, now>=lastSample, now-lastSample<=0.5,
+              now-lastMovement<=1.5 else {
+            reset()
+            lastAngle=angle
+            lastSample=now
+            lastMovement=now
+            return false
+        }
+        let delta=atan2(sin(angle-previous),cos(angle-previous))
+        lastAngle=angle
+        lastSample=now
+        // Cursor jumps are not circles. Signed travel cancels back-and-forth motion.
+        guard abs(delta)<=Double.pi/2 else {
+            reset()
+            return false
+        }
+        if abs(delta)>0.00001 { lastMovement=now }
+        radians+=delta
+        return abs(radians)>5 * 2 * Double.pi + 0.000001
     }
 }
 
@@ -53,6 +90,8 @@ struct PetModel {
     private(set) var blinkStarted = -Double.infinity
     var nextRandomDecision: Double
     var chaseAllowedAfter: Double = 0
+    private var gazeOrbit=GazeOrbitTracker()
+    private(set) var dizzyAllowedAfter: Double = 0
     let sleepAfter: Double = 120
     static let decisionInterval: Double = 30
     static let affectionProbability: Double = 0.04
@@ -68,6 +107,7 @@ struct PetModel {
     }
 
     mutating func perform(_ next: PetMotion, now: Double, userInitiated: Bool = true) {
+        gazeOrbit.reset()
         if next == .idle && motion != .idle {
             nextBlink=now+Double.random(in:6...10)
             blinkStarted = -Double.infinity
@@ -76,12 +116,32 @@ struct PetModel {
         started = now
         isChasing = false
         if next == .waiting { nextWaiting = now + Double.random(in:45...75) }
+        if next == .dizzy { dizzyAllowedAfter = now + 15 }
         if userInitiated {
             lastInteraction = now
             nextRandomDecision = now + Self.decisionInterval
             chaseAllowedAfter = now + 4
         }
         nextWalk = now + 24
+    }
+
+    @discardableResult
+    mutating func observeGaze(dx: Double, dyUp: Double, now: Double, eligible: Bool) -> Bool {
+        guard eligible, motion == .idle, now>=dizzyAllowedAfter else {
+            gazeOrbit.reset()
+            return false
+        }
+        let previous=gazeOrbit.radians
+        if gazeOrbit.sample(dx:dx,dyUp:dyUp,now:now) {
+            perform(.dizzy,now:now)
+            return true
+        }
+        if abs(gazeOrbit.radians-previous)>0.001 {
+            lastInteraction=now
+            nextWalk=now+24
+            nextRandomDecision=now+Self.decisionInterval
+        }
+        return false
     }
 
     mutating func beginChase(now: Double, userInitiated: Bool = false) {
@@ -161,6 +221,9 @@ struct PetModel {
             return Int(max(0,now-started)/0.8)%2 == 0 ? 0 : 5
         }
         if motion.isPeeking { return (now-started).truncatingRemainder(dividingBy: 3.8) >= 3.62 ? min(1,count-1) : 0 }
+        if motion == .headpat || motion == .waving || motion == .waiting {
+            return min(count-1,Int(max(0,now-started)/motion.frameSeconds))
+        }
         return Int(max(0, now - started) / motion.frameSeconds) % count
     }
 

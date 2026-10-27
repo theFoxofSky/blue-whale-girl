@@ -52,23 +52,26 @@ final class SpriteStore {
     var peekBounds: [String:NSRect] = [:]
     init(resources: URL) throws {
         let directory=resources.appendingPathComponent("HighResolution")
-        let manifest=try JSONDecoder().decode(SpriteManifest.self,
-                     from:Data(contentsOf:directory.appendingPathComponent("manifest.json")))
-        guard manifest.version == 1 && manifest.canvas == [192,208] else {
-            throw NSError(domain:"BlueWhalePet",code:2,userInfo:[NSLocalizedDescriptionKey:"高清素材配置不正确"])
-        }
-        for (name,records) in manifest.frames {
-            frames[name]=try records.map { record in
-                let url=directory.appendingPathComponent(record.file)
-                guard record.rect.count == 4 && record.contentBounds.count == 4 && record.pixelSize.count == 2,
-                      record.rect.allSatisfy({ $0.isFinite }),record.rect[2]>0,record.rect[3]>0,
-                      record.registrationFeet == nil || record.registrationFeet!.count == 4,
-                      let source=CGImageSourceCreateWithURL(url as CFURL,nil),
-                      let image=CGImageSourceCreateImageAtIndex(source,0,nil),
-                      [image.width,image.height] == record.pixelSize else {
-                    throw NSError(domain:"BlueWhalePet",code:3,userInfo:[NSLocalizedDescriptionKey:"无法读取高清动画素材：\(record.file)"])
+        for filename in ["manifest.json","dizzy.json"] {
+            let manifest=try JSONDecoder().decode(SpriteManifest.self,
+                         from:Data(contentsOf:directory.appendingPathComponent(filename)))
+            guard manifest.version == 1 && manifest.canvas == [192,208] else {
+                throw NSError(domain:"BlueWhalePet",code:2,userInfo:[NSLocalizedDescriptionKey:"高清素材配置不正确"])
+            }
+            for (name,records) in manifest.frames {
+                guard frames[name] == nil else { throw NSError(domain:"BlueWhalePet",code:11) }
+                frames[name]=try records.map { record in
+                    let url=directory.appendingPathComponent(record.file)
+                    guard record.rect.count == 4 && record.contentBounds.count == 4 && record.pixelSize.count == 2,
+                          record.rect.allSatisfy({ $0.isFinite }),record.rect[2]>0,record.rect[3]>0,
+                          record.registrationFeet == nil || record.registrationFeet!.count == 4,
+                          let source=CGImageSourceCreateWithURL(url as CFURL,nil),
+                          let image=CGImageSourceCreateImageAtIndex(source,0,nil),
+                          [image.width,image.height] == record.pixelSize else {
+                        throw NSError(domain:"BlueWhalePet",code:3,userInfo:[NSLocalizedDescriptionKey:"无法读取高清动画素材：\(record.file)"])
+                    }
+                    return SpriteFrame(image,record:record)
                 }
-                return SpriteFrame(image,record:record)
             }
         }
         for name in ["peek-left","peek-right"] {
@@ -92,6 +95,7 @@ final class PetPanel: NSPanel {
 final class PetView: NSView {
     weak var controller: PetController?
     var sprite: SpriteFrame? { didSet { needsDisplay = true } }
+    var dizzyElapsed: Double? { didSet { needsDisplay = true } }
     var pressed = false
     private var pressMouse = NSPoint.zero
     private var pressOrigin = NSPoint.zero
@@ -104,17 +108,58 @@ final class PetView: NSView {
         NSColor.clear.setFill()
         dirtyRect.fill(using: .copy)
         NSGraphicsContext.current?.imageInterpolation = .high
+        guard let elapsed=dizzyElapsed else {
+            sprite?.draw(in:bounds)
+            return
+        }
+        drawDizzyOrbit(elapsed:elapsed,front:false)
+        NSGraphicsContext.saveGraphicsState()
+        var transform=AffineTransform()
+        let pivot=NSPoint(x:bounds.width/2,y:202*bounds.height/208)
+        let strength=min(1,elapsed/0.2)*min(1,max(0,(5-elapsed)/0.6))
+        transform.translate(x:pivot.x,y:pivot.y)
+        transform.rotate(byDegrees:sin(elapsed*2*Double.pi/1.3)*1.8*strength)
+        transform.translate(x:-pivot.x,y:-pivot.y)
+        (transform as NSAffineTransform).concat()
         sprite?.draw(in:bounds)
+        NSGraphicsContext.restoreGraphicsState()
+        drawDizzyOrbit(elapsed:elapsed,front:true)
+    }
+
+    private func drawDizzyOrbit(elapsed: Double, front: Bool) {
+        let sx=bounds.width/192, sy=bounds.height/208
+        let opacity=min(1,elapsed/0.15)*min(1,max(0,(5-elapsed)/0.5))
+        for index in 0..<5 {
+            let angle=elapsed*2*Double.pi/1.4+Double(index)*2*Double.pi/5
+            guard (sin(angle)>=0) == front else { continue }
+            let x=(89+38*cos(angle))*sx, y=(85+9*sin(angle))*sy
+            let radius=(3.8+0.8*sin(elapsed*7+Double(index)))*sx
+            let star=NSBezierPath()
+            for point in 0..<8 {
+                let a=Double(point)*Double.pi/4-Double.pi/2
+                let r=point%2 == 0 ? radius : radius*0.28
+                let p=NSPoint(x:x+cos(a)*r,y:y+sin(a)*r)
+                if point == 0 { star.move(to:p) } else { star.line(to:p) }
+            }
+            star.close()
+            NSColor(calibratedRed:1,green:0.88,blue:0.3,alpha:opacity).setFill()
+            star.fill()
+            NSColor(calibratedRed:0.74,green:0.49,blue:0.12,alpha:opacity*0.8).setStroke()
+            star.lineWidth=0.55*sx
+            star.stroke()
+        }
     }
     func sourcePoint(_ local: NSPoint) -> NSPoint {
         NSPoint(x: local.x * 192 / bounds.width, y: local.y * 208 / bounds.height)
     }
     func isHead(_ p: NSPoint) -> Bool {
-        let x = (p.x - 89) / 41, y = (p.y - 80) / 34
+        let x = (p.x - 89) / 41
+        let y = (p.y - (dizzyElapsed == nil ? 80 : 136)) / (dizzyElapsed == nil ? 34 : 28)
         return x*x + y*y < 1
     }
     func isBowl(_ p: NSPoint) -> Bool {
-        NSRect(x: 65, y: 111, width: 58, height: 38).contains(p)
+        let rect=dizzyElapsed == nil ? NSRect(x:65,y:111,width:58,height:38) : NSRect(x:71,y:157,width:45,height:27)
+        return rect.contains(p)
     }
     override func mouseDown(with event: NSEvent) {
         pressedWhilePeeking = controller?.model.motion.isPeeking ?? false
@@ -273,6 +318,7 @@ final class PetController: NSObject, NSMenuDelegate {
             updateSprite(now:now,localMouse:local,pointerNear:false)
             return
         }
+        respondToGaze(now:now,localMouse:local,pointerNear:pointerNear,buttonsDown:buttonsDown)
         respondToPointer(now:now,source:source,hasPixel:hasPixel,mouseMoved:mouseMoved,buttonsDown:buttonsDown)
         if buttonsDown && model.isChasing { model.stopChase(now:now) }
         if !view.pressed && !menuOpen && !buttonsDown {
@@ -298,6 +344,12 @@ final class PetController: NSObject, NSMenuDelegate {
         }
     }
 
+    private func respondToGaze(now: Double, localMouse: NSPoint, pointerNear: Bool, buttonsDown: Bool) {
+        let source=view.sourcePoint(localMouse)
+        model.observeGaze(dx:source.x-89,dyUp:80-source.y,now:now,
+                          eligible:pointerNear && !view.pressed && !menuOpen && !buttonsDown)
+    }
+
     private func advanceWalk(dt: Double, area: NSRect) {
         var origin=panel.frame.origin
         origin.x += (model.motion == .walkRight ? 1 : -1)*34*dt
@@ -320,6 +372,7 @@ final class PetController: NSObject, NSMenuDelegate {
     }
 
     private func updateSprite(now: Double, localMouse: NSPoint, pointerNear: Bool) {
+        view.dizzyElapsed=model.motion == .dizzy ? max(0,now-model.started) : nil
         if model.motion == .affection {
             let sample=model.affectionSample(now:now)
             view.sprite=sprites.frames[sample.key]?[sample.index]
@@ -552,6 +605,16 @@ final class PetController: NSObject, NSMenuDelegate {
             let item=makeMenu().items.first { $0.title == title }
             try check(item?.action != nil && NSApp.sendAction(item!.action!,to:item!.target,from:item),"Menu action: "+title)
         }
+        func click(source: NSPoint) {
+            let point=view.convert(NSPoint(x:source.x*scale,y:source.y*scale),to:nil)
+            let time=ProcessInfo.processInfo.systemUptime
+            let down=NSEvent.mouseEvent(with:.leftMouseDown,location:point,modifierFlags:[],timestamp:time,
+                                        windowNumber:panel.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1)!
+            let up=NSEvent.mouseEvent(with:.leftMouseUp,location:point,modifierFlags:[],timestamp:time+0.1,
+                                      windowNumber:panel.windowNumber,context:nil,eventNumber:2,clickCount:1,pressure:0)!
+            view.mouseDown(with:down)
+            view.mouseUp(with:up)
+        }
         panel.setFrameOrigin(NSPoint(x:area.minX+40,y:area.minY+40))
         for name in ["idle","running-right","running-left","waving","jumping","look","eating","sleeping","headpat","rolling","peek-left","peek-right"] {
             view.sprite=sprites.frames[name]![0]
@@ -565,6 +628,74 @@ final class PetController: NSObject, NSMenuDelegate {
                   "Every gaze direction renders from original resolution")
         try check(statusItem.button?.image != nil && statusItem.button?.title == "", "Menu bar uses the DeepSeek whale image")
         if let button=statusItem.button { try writePreview(of:button,to:directory.appendingPathComponent("menu-bar-icon.png")) }
+        for (title,motion,count) in [("摸摸头",PetMotion.headpat,6),("打个招呼",PetMotion.waving,4)] {
+            try activate(title)
+            let began=model.started
+            for index in 0..<count {
+                updateSprite(now:began+Double(index)*motion.frameSeconds+0.001,localMouse:.zero,pointerNear:false)
+                try check(view.sprite?.image === sprites.frames[motion.rawValue]![index].image,
+                          "\(motion) renders frame \(index) once in order")
+            }
+            respondToPointer(now:began+0.2,source:NSPoint(x:89,y:80),hasPixel:true,mouseMoved:true,buttonsDown:false)
+            try check(model.started==began,"Hover cannot restart the \(motion) animation")
+            model.tick(now:began+motion.duration!+0.001,pointerNear:true,randomRoll:{0.99})
+            try check(model.motion == .idle,"\(motion) completes after one native animation cycle")
+        }
+        let gazeScale=scale
+        for size in [1.0,1.25,1.6] {
+            scale=size
+            panel.setContentSize(NSSize(width:192*size,height:208*size))
+            model=PetModel(now:0)
+            for sample in 0...320 {
+                let angle=Double(sample)/64*2*Double.pi
+                respondToGaze(now:Double(sample)/64,
+                              localMouse:NSPoint(x:(89+100*cos(angle))*size,y:(80-100*sin(angle))*size),
+                              pointerNear:true,buttonsDown:false)
+            }
+            try check(model.motion == .idle,"Five gaze turns alone do not trigger dizziness at size \(size)")
+            let angle=321.0/64*2*Double.pi
+            respondToGaze(now:321.0/64,localMouse:NSPoint(x:(89+100*cos(angle))*size,y:(80-100*sin(angle))*size),
+                          pointerNear:true,buttonsDown:false)
+            try check(model.motion == .dizzy,"More than five gaze turns trigger seated dizziness at size \(size)")
+            for (index,time) in [0.2,0.55,0.9,1.25].enumerated() {
+                updateSprite(now:model.started+time,localMouse:.zero,pointerNear:true)
+                try writeViewPreview(to:directory.appendingPathComponent("dizzy-\(size)-\(index).png"))
+            }
+            try check(view.sprite?.image === sprites.frames["dizzy"]![0].image && view.dizzyElapsed != nil,
+                      "Dizzy state uses the high-resolution seated sprite and animated overlay")
+            try check(view.isHead(NSPoint(x:89,y:136)) && !view.isBowl(NSPoint(x:89,y:136)),
+                      "Seated dizzy head keeps a distinct click target at size \(size)")
+            try check(view.isBowl(NSPoint(x:89,y:169)) && !view.isHead(NSPoint(x:89,y:169)),
+                      "Seated dizzy bowl keeps a distinct click target at size \(size)")
+            let first=try Data(contentsOf:directory.appendingPathComponent("dizzy-\(size)-0.png"))
+            let second=try Data(contentsOf:directory.appendingPathComponent("dizzy-\(size)-1.png"))
+            try check(first != second,"Dizzy sway and orbit visibly advance at size \(size)")
+            model.tick(now:model.started+5.01,pointerNear:true,randomRoll:{0.99})
+            updateSprite(now:model.started,localMouse:.zero,pointerNear:false)
+            try check(model.motion == .idle && view.dizzyElapsed == nil,"Recovery removes the orbit overlay at size \(size)")
+        }
+        scale=gazeScale
+        panel.setContentSize(NSSize(width:192*scale,height:208*scale))
+        for (point,expected) in [(NSPoint(x:89,y:136),PetMotion.headpat),(NSPoint(x:89,y:169),.eating)] {
+            act(.dizzy)
+            click(source:point)
+            try check(model.motion==expected && view.dizzyElapsed == nil,"Clicking seated dizzy pet starts \(expected) and clears the stars")
+        }
+        for blocked in ["drag","menu","buttons","far"] {
+            model=PetModel(now:0)
+            view.pressed=blocked == "drag"
+            menuOpen=blocked == "menu"
+            for sample in 0...400 {
+                let angle=Double(sample)/64*2*Double.pi
+                respondToGaze(now:Double(sample)/64,
+                              localMouse:NSPoint(x:(89+100*cos(angle))*scale,y:(80-100*sin(angle))*scale),
+                              pointerNear:blocked != "far",buttonsDown:blocked == "buttons")
+            }
+            try check(model.motion == .idle,"\(blocked) blocks the gaze orbit gesture")
+            view.pressed=false
+            menuOpen=false
+        }
+        act(.idle)
         try activate("举碗要饭")
         try check(model.motion == .waiting,"Bowl waiting animation is reachable from the menu")
         for index in 0..<6 {
@@ -596,13 +727,7 @@ final class PetController: NSObject, NSMenuDelegate {
         respondToPointer(now:sleepTime+10,source:NSPoint(x:88,y:83),hasPixel:true,mouseMoved:true,buttonsDown:false)
         model.tick(now:sleepTime+1000,pointerNear:true,canChase:true,randomRoll:{0.01})
         try check(model.motion == .sleeping,"Moving over the sleeping head never wakes the pet")
-        let clickPoint=NSPoint(x:view.bounds.midX,y:view.bounds.midY)
-        let down=NSEvent.mouseEvent(with:.leftMouseDown,location:clickPoint,modifierFlags:[],timestamp:sleepTime+10,
-                                    windowNumber:panel.windowNumber,context:nil,eventNumber:1,clickCount:1,pressure:1)!
-        let up=NSEvent.mouseEvent(with:.leftMouseUp,location:clickPoint,modifierFlags:[],timestamp:sleepTime+10.1,
-                                  windowNumber:panel.windowNumber,context:nil,eventNumber:2,clickCount:1,pressure:0)!
-        view.mouseDown(with:down)
-        view.mouseUp(with:up)
+        click(source:NSPoint(x:96,y:104))
         try check(model.motion == .idle,"A real view click wakes the sleeping pet")
         try activate("🍚 喂一碗大米饭")
         try check(model.motion == .eating && !model.isChasing,"Feeding takes precedence")

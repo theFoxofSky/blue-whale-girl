@@ -5,8 +5,8 @@ if CommandLine.arguments.contains("--self-test") {
         var checks = runModelTests()
         let sprites = try SpriteStore(resources: Bundle.main.resourceURL!)
         let count = sprites.frames.values.reduce(0) { $0 + $1.count }
-        precondition(count == 103, "Expected existing frames, four peeking frames and eight rolling frames")
-        checks.append("All 103 animation frames load")
+        precondition(count == 104, "Expected 103 original frames and one seated dizzy sprite")
+        checks.append("All 104 animation frames load")
         for frames in sprites.frames.values {
             for frame in frames {
                 let bounds=frame.opaqueBounds()

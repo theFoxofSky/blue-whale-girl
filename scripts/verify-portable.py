@@ -9,7 +9,7 @@ from report import fingerprints
 
 PROJECT_FILES = ['Sources', 'Tests', 'scripts', 'Assets', 'HighResolution', 'Docs',
                  'build.sh', 'Info.plist', 'PetIcon.icns', 'README.md', '.gitignore', '使用说明.txt',
-                 'LICENSE', '.gitattributes']
+                 'LICENSE', '.gitattributes', 'teaser.png']
 
 
 def copy_project(project, target):

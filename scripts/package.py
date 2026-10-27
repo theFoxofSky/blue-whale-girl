@@ -27,6 +27,7 @@ if __name__ == '__main__':
     if digest(app / 'Contents/MacOS/BlueWhalePet') != regression['binary_sha256']:
         raise SystemExit('The tested executable changed.')
     fixture = json.loads((project / 'Tests/Fixtures/high-resolution-sha256.json').read_text())
+    fixture.update(json.loads((project / 'Tests/Fixtures/dizzy-sha256.json').read_text()))
     for name, expected in fixture.items():
         if digest(app / 'Contents/Resources/HighResolution' / name) != expected:
             raise SystemExit('Packaged artwork changed: ' + name)
@@ -54,4 +55,5 @@ if __name__ == '__main__':
                 raise SystemExit('ZIP integrity check failed')
     checksums = {p.name: digest(p) for p in [app_zip, source_zip]}
     (dist / 'SHA256SUMS').write_text(''.join(sha + '  ' + name + '\n' for name, sha in checksums.items()))
-    print(json.dumps({'version': version, 'packages': checksums, 'original_hd_frames': 103}, ensure_ascii=False, indent=2))
+    print(json.dumps({'version': version, 'packages': checksums, 'original_hd_frames': 103,
+                      'total_hd_frames': 104}, ensure_ascii=False, indent=2))
