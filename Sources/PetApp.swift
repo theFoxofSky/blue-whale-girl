@@ -52,7 +52,7 @@ final class SpriteStore {
     var peekBounds: [String:NSRect] = [:]
     init(resources: URL) throws {
         let directory=resources.appendingPathComponent("HighResolution")
-        for filename in ["manifest.json","dizzy.json"] {
+        for filename in ["manifest.json","dizzy.json","greeting.json"] {
             let manifest=try JSONDecoder().decode(SpriteManifest.self,
                          from:Data(contentsOf:directory.appendingPathComponent(filename)))
             guard manifest.version == 1 && manifest.canvas == [192,208] else {
@@ -296,23 +296,18 @@ final class PetController: NSObject, NSMenuDelegate {
         dockStart=ProcessInfo.processInfo.systemUptime-0.32
     }
 
-    private func localMouse() -> NSPoint {
-        view.convert(panel.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
-    }
-
-    private func update() {
-        let now = ProcessInfo.processInfo.systemUptime
+    private func update(now: Double = ProcessInfo.processInfo.systemUptime,
+                        mouse: NSPoint = NSEvent.mouseLocation,
+                        buttonsDown: Bool = NSEvent.pressedMouseButtons != 0) {
         let dt = min(0.10, max(0, now-lastTick))
         lastTick = now
-        let mouse = NSEvent.mouseLocation
-        let local = localMouse()
+        let local = view.convert(panel.convertPoint(fromScreen:mouse),from:nil)
         let source = view.sourcePoint(local)
         let pointerNear = hypot(local.x-view.bounds.midX, local.y-view.bounds.midY) < 240
         let hasPixel = view.sprite?.contains(source) ?? false
         panel.ignoresMouseEvents = !view.pressed && !hasPixel
         let mouseMoved = hypot(mouse.x-lastMouse.x, mouse.y-lastMouse.y) > 2
         lastMouse = mouse
-        let buttonsDown = NSEvent.pressedMouseButtons != 0
         if model.motion.isPeeking {
             if !view.pressed && !menuOpen { updatePeek(now:now) }
             updateSprite(now:now,localMouse:local,pointerNear:false)
@@ -373,6 +368,11 @@ final class PetController: NSObject, NSMenuDelegate {
 
     private func updateSprite(now: Double, localMouse: NSPoint, pointerNear: Bool) {
         view.dizzyElapsed=model.motion == .dizzy ? max(0,now-model.started) : nil
+        if model.motion == .waving {
+            let sample=model.greetingSample(now:now)
+            view.sprite=sprites.frames[sample.key]?[sample.index]
+            return
+        }
         if model.motion == .affection {
             let sample=model.affectionSample(now:now)
             view.sprite=sprites.frames[sample.key]?[sample.index]
@@ -628,7 +628,7 @@ final class PetController: NSObject, NSMenuDelegate {
                   "Every gaze direction renders from original resolution")
         try check(statusItem.button?.image != nil && statusItem.button?.title == "", "Menu bar uses the DeepSeek whale image")
         if let button=statusItem.button { try writePreview(of:button,to:directory.appendingPathComponent("menu-bar-icon.png")) }
-        for (title,motion,count) in [("摸摸头",PetMotion.headpat,6),("打个招呼",PetMotion.waving,4)] {
+        for (title,motion,count) in [("摸摸头",PetMotion.headpat,6)] {
             try activate(title)
             let began=model.started
             for index in 0..<count {
@@ -641,6 +641,22 @@ final class PetController: NSObject, NSMenuDelegate {
             model.tick(now:began+motion.duration!+0.001,pointerNear:true,randomRoll:{0.99})
             try check(model.motion == .idle,"\(motion) completes after one native animation cycle")
         }
+        try activate("打个招呼")
+        let greetingStart=model.started
+        var greetingImages: Set<ObjectIdentifier> = []
+        for index in 0..<PetModel.greetingFrames.count {
+            let time=greetingStart+Double(index)*PetMotion.waving.frameSeconds+0.001
+            updateSprite(now:time,localMouse:.zero,pointerNear:false)
+            let sample=PetModel.greetingFrames[index]
+            try check(view.sprite?.image === sprites.frames[sample.key]![sample.index].image,"Greeting pose \(index) renders its intended source")
+            greetingImages.insert(ObjectIdentifier(view.sprite!.image))
+            try writeViewPreview(to:directory.appendingPathComponent(String(format:"greeting-%02d.png",index)))
+        }
+        try check(greetingImages.count==8,"Greeting visibly uses eight distinct pose images")
+        respondToPointer(now:greetingStart+0.5,source:NSPoint(x:89,y:80),hasPixel:true,mouseMoved:true,buttonsDown:false)
+        try check(model.started==greetingStart,"Hover does not restart or cut short the hand-waving sequence")
+        model.tick(now:greetingStart+PetMotion.waving.duration!+0.001,pointerNear:true,randomRoll:{0.99})
+        try check(model.motion == .idle,"Greeting lowers the hand and returns to idle once")
         let gazeScale=scale
         for size in [1.0,1.25,1.6] {
             scale=size
@@ -673,6 +689,24 @@ final class PetController: NSObject, NSMenuDelegate {
             model.tick(now:model.started+5.01,pointerNear:true,randomRoll:{0.99})
             updateSprite(now:model.started,localMouse:.zero,pointerNear:false)
             try check(model.motion == .idle && view.dizzyElapsed == nil,"Recovery removes the orbit overlay at size \(size)")
+            for firstDirection in [-1.0,1.0] {
+                model=PetModel(now:0)
+                var gestureStart=0.0
+                for direction in [firstDirection,-firstDirection] {
+                    for sample in 0...328 where model.motion != .dizzy {
+                        let angle=direction*Double(sample)/64*2*Double.pi
+                        let local=NSPoint(x:(89+100*cos(angle))*size,y:(80-100*sin(angle))*size)
+                        let screen=panel.convertPoint(toScreen:view.convert(local,to:nil))
+                        update(now:gestureStart+Double(sample)/64,mouse:screen,buttonsDown:false)
+                    }
+                    try check(model.motion == .dizzy,"Full input chain accepts direction \(direction) after direction \(firstDirection) at size \(size)")
+                    let recovered=model.started+5.01
+                    let far=NSPoint(x:area.maxX+1000,y:area.maxY+1000)
+                    update(now:recovered,mouse:far,buttonsDown:false)
+                    try check(model.motion == .idle,"Full input chain recovers without a hidden waiting period")
+                    gestureStart=recovered+0.01
+                }
+            }
         }
         scale=gazeScale
         panel.setContentSize(NSSize(width:192*scale,height:208*scale))

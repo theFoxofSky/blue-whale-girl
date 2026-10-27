@@ -14,7 +14,7 @@ enum PetMotion: String, CaseIterable {
         switch self {
         case .eating: return 3.6
         case .headpat: return 6 * frameSeconds
-        case .waving: return 4 * frameSeconds
+        case .waving: return Double(PetModel.greetingFrames.count) * frameSeconds
         case .jumping: return 0.9
         case .affection: return 2.2
         case .waiting: return 2.4
@@ -30,7 +30,7 @@ enum PetMotion: String, CaseIterable {
         case .headpat: return 0.17
         case .walkRight, .walkLeft: return 0.14
         case .jumping: return 0.18
-        case .waving: return 0.15
+        case .waving: return 0.14
         case .waiting: return 0.4
         case .idle, .affection, .dizzy, .peekLeft, .peekRight: return 0.24
         }
@@ -91,7 +91,6 @@ struct PetModel {
     var nextRandomDecision: Double
     var chaseAllowedAfter: Double = 0
     private var gazeOrbit=GazeOrbitTracker()
-    private(set) var dizzyAllowedAfter: Double = 0
     let sleepAfter: Double = 120
     static let decisionInterval: Double = 30
     static let affectionProbability: Double = 0.04
@@ -116,7 +115,6 @@ struct PetModel {
         started = now
         isChasing = false
         if next == .waiting { nextWaiting = now + Double.random(in:45...75) }
-        if next == .dizzy { dizzyAllowedAfter = now + 15 }
         if userInitiated {
             lastInteraction = now
             nextRandomDecision = now + Self.decisionInterval
@@ -127,7 +125,7 @@ struct PetModel {
 
     @discardableResult
     mutating func observeGaze(dx: Double, dyUp: Double, now: Double, eligible: Bool) -> Bool {
-        guard eligible, motion == .idle, now>=dizzyAllowedAfter else {
+        guard eligible, motion == .idle else {
             gazeOrbit.reset()
             return false
         }
@@ -225,6 +223,17 @@ struct PetModel {
             return min(count-1,Int(max(0,now-started)/motion.frameSeconds))
         }
         return Int(max(0, now - started) / motion.frameSeconds) % count
+    }
+
+    static let greetingFrames: [(key:String,index:Int)] = [
+        ("waving",0),("greeting",0),("waving",1),("greeting",1),
+        ("waving",1),("greeting",2),("waving",2),("greeting",1),
+        ("waving",2),("greeting",2),("greeting",3),("waving",3)
+    ]
+
+    func greetingSample(now: Double) -> (key:String,index:Int) {
+        let index=min(Self.greetingFrames.count-1,Int(max(0,now-started)/PetMotion.waving.frameSeconds))
+        return Self.greetingFrames[index]
     }
 
     func affectionSample(now: Double) -> (key: String, index: Int) {

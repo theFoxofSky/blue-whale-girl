@@ -48,24 +48,27 @@ struct AssetChecks {
                       "All original-resolution images decode with ImageIO",
                       "Every image retains its original pixel dimensions",
                       "103 image files and registration manifest match the verified v1.1.4 bytes"]
-            let dizzyManifest=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("dizzy.json"))) as! [String:Any]
-            let dizzyFrames=dizzyManifest["frames"] as! [String:[[String:Any]]]
-            try require(Set(dizzyFrames.keys)==["dizzy"] && dizzyFrames["dizzy"]!.count==1,"Missing seated dizzy sprite")
-            let record=dizzyFrames["dizzy"]![0]
-            let file=record["file"] as! String
-            let dizzyFixture=try JSONDecoder().decode([String:String].self,from:Data(contentsOf:project.appendingPathComponent("Tests/Fixtures/dizzy-sha256.json")))
-            try require(Set(dizzyFixture.keys)==["dizzy.json",file],"Unexpected dizzy image inventory")
-            for (name,expectedHash) in dizzyFixture {
-                let hash=SHA256.hash(data:try Data(contentsOf:directory.appendingPathComponent(name))).map { String(format:"%02x",$0) }.joined()
-                try require(hash==expectedHash,"Dizzy artwork bytes changed: \(name)")
+            for (name,count) in [("dizzy",1),("greeting",4)] {
+                let extraManifest=try JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent(name+".json"))) as! [String:Any]
+                let extraFrames=extraManifest["frames"] as! [String:[[String:Any]]]
+                try require(Set(extraFrames.keys)==[name] && extraFrames[name]!.count==count,"Missing \(name) sprites")
+                let fixture=try JSONDecoder().decode([String:String].self,from:Data(contentsOf:project.appendingPathComponent("Tests/Fixtures/"+name+"-sha256.json")))
+                let files=Set(extraFrames[name]!.map { $0["file"] as! String }).union([name+".json"])
+                try require(Set(fixture.keys)==files,"Unexpected \(name) image inventory")
+                for (file,expectedHash) in fixture {
+                    let hash=SHA256.hash(data:try Data(contentsOf:directory.appendingPathComponent(file))).map { String(format:"%02x",$0) }.joined()
+                    try require(hash==expectedHash,"Artwork bytes changed: \(file)")
+                }
+                for record in extraFrames[name]! {
+                    let source=CGImageSourceCreateWithURL(directory.appendingPathComponent(record["file"] as! String) as CFURL,nil)!
+                    let image=CGImageSourceCreateImageAtIndex(source,0,nil)!
+                    try require([image.width,image.height]==record["pixelSize"] as! [Int] && image.width>=1000 && image.height>=1000,
+                                "\(name) sprite lost its original high-resolution pixels")
+                    let bitmap=NSBitmapImageRep(cgImage:image)
+                    try require((bitmap.colorAt(x:0,y:0)?.alphaComponent ?? 1)==0,"\(name) sprite needs real transparency")
+                }
+                checks.append("\(name) sprites preserve original resolution, alpha and SHA-256")
             }
-            let source=CGImageSourceCreateWithURL(directory.appendingPathComponent(file) as CFURL,nil)!
-            let image=CGImageSourceCreateImageAtIndex(source,0,nil)!
-            try require([image.width,image.height]==record["pixelSize"] as! [Int] && image.width>=1000 && image.height>=1000,
-                        "Dizzy sprite lost its original high-resolution pixels")
-            let bitmap=NSBitmapImageRep(cgImage:image)
-            try require((bitmap.colorAt(x:0,y:0)?.alphaComponent ?? 1)==0,"Dizzy sprite needs real transparency")
-            checks.append("New seated spiral-eye sprite preserves original resolution, alpha and SHA-256")
         } else {
             let snapshots = URL(fileURLWithPath: CommandLine.arguments[2])
             for index in 0..<16 {

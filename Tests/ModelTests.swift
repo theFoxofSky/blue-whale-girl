@@ -127,7 +127,7 @@ func runModelTests() -> [String] {
     waiting.tick(now:1000,pointerNear:true,canChase:true,randomRoll:{0.01})
     check(waiting.motion == .sleeping,"Pointer proximity and expired animation timers cannot wake the pet")
 
-    for (motion,count) in [(PetMotion.headpat,6),(.waving,4)] {
+    for (motion,count) in [(PetMotion.headpat,6)] {
         var once=PetModel(now:0)
         once.automaticWalking=false
         once.perform(motion,now:1)
@@ -141,6 +141,18 @@ func runModelTests() -> [String] {
         check(once.motion == .idle,"\(motion) returns to idle after one cycle")
         check(!motion.reactsToPointerMovement,"Pointer movement cannot restart \(motion) mid-cycle")
     }
+    var greeting=PetModel(now:0)
+    greeting.perform(.waving,now:1)
+    let greetingSamples=(0..<PetModel.greetingFrames.count).map {
+        greeting.greetingSample(now:1+Double($0)*PetMotion.waving.frameSeconds+0.001)
+    }
+    check(greetingSamples.count==12,"Greeting contains twelve pose steps")
+    check(Set(greetingSamples.map { "\($0.key):\($0.index)" }).count==8,"Greeting uses eight distinct original and new poses")
+    check(greetingSamples.first!.key=="waving" && greetingSamples.first!.index==0 &&
+          greetingSamples.last!.key=="waving" && greetingSamples.last!.index==3,"Greeting raises and lowers the hand once")
+    check(PetMotion.waving.duration!>=1.5 && PetMotion.waving.duration!<=2.0,"Greeting gives time for several natural hand swings")
+    greeting.tick(now:1+PetMotion.waving.duration!+0.001,pointerNear:true,randomRoll:{0.99})
+    check(greeting.motion == .idle,"Greeting finishes one complete hand-waving sequence")
 
     func orbit(_ pet: inout PetModel, start: Double, turns: Double,
                direction: Double = 1, fromTurns: Double = 0, eligible: Bool = true) -> Bool {
@@ -201,12 +213,16 @@ func runModelTests() -> [String] {
         check(!orbit(&protected,start:0,turns:6) && protected.motion==motion,
               "Mouse circles cannot interrupt \(motion)")
     }
-    var cooldown=PetModel(now:0)
-    cooldown.perform(.dizzy,now:0)
-    cooldown.tick(now:5.1,pointerNear:true,randomRoll:{0.99})
-    check(!orbit(&cooldown,start:5.2,turns:6),"Dizzy recovery has a cooldown before another gesture")
-    check(orbit(&cooldown,start:16,turns:5.125),"A fresh gesture works after the cooldown")
-    cooldown.perform(.eating,now:22)
-    check(cooldown.motion == .eating,"An explicit click action can interrupt dizziness")
+    for firstDirection in [1.0,-1.0] {
+        var consecutive=PetModel(now:0)
+        check(orbit(&consecutive,start:0,turns:5.125,direction:firstDirection),"First orbit works before changing direction")
+        let recovered=consecutive.started+5.01
+        consecutive.tick(now:recovered,pointerNear:true,randomRoll:{0.99})
+        check(consecutive.motion == .idle,"Dizzy animation recovers before a new gesture")
+        check(orbit(&consecutive,start:recovered+0.01,turns:5.125,direction:-firstDirection),
+              "Opposite direction triggers immediately after recovery (first direction \(firstDirection))")
+        consecutive.perform(.eating,now:consecutive.started+0.5)
+        check(consecutive.motion == .eating,"An explicit click action can interrupt dizziness")
+    }
     return passed
 }
