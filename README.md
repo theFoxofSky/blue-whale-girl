@@ -33,7 +33,7 @@ open .build/蓝色大肥鱼.app
 
 ## 打包
 
-完整回归通过后运行 `python3 scripts/package.py`，生成 `dist/` 下的安装包、源码包和 SHA-256 清单。打包前会核对当前源码与素材是否匹配回归结果。
+完整回归通过后运行 `python3 scripts/package.py`，生成 `dist/` 下的安装包、源码包和 SHA-256 清单。
 
 ## 目录
 
