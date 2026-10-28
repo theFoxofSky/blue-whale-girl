@@ -44,6 +44,4 @@ open .build/蓝色大肥鱼.app
 - `scripts/`：回归、独立构建验证、打包和本机实例管理。
 - `Docs/`：预览与已完成的回归记录。
 
-构建缓存、应用包、安装压缩包和测试输出均已加入 `.gitignore`。创作阶段的旧素材、旧脚本和历史版本保存在本地项目旁的 `archive/`，不参与构建。
-
 菜单栏鲸鱼图标来自 [DeepSeek 官方仓库](https://github.com/deepseek-ai/DeepSeek-LLM/blob/main/images/logo.svg)，来源与原始 SVG 保存在 `Assets/`。
